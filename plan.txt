@@ -1,0 +1,35 @@
+Every time is a (not necessarily connected) interval.
+Units either have a mapping onto another division of time, or contain it. E.g. Each day maps onto a weekday; each minute contains 00-59 seconds; each year is AD or BC (which counts backwards).
+Either repeat (days of the week, hour of the day) or count forever (years)
+A-B is the interval from start of A to end of B.
+"Before A" is the interval (start of time, start of A]
+"after" and "before" use the closest possible answer
+Define adjacent times: 1BC to 1AD, 23:59 to 00:00, 28 February to 1 March if not a leap year
+"last week in March" describes at most one week each year.
+Define synchronous times: 18/02/2018 is a Sunday; 13:00 GMT is 14:00 CET (in whatever dates the daylight savings times don't overlap)
+Units can't be subdivided arbitrarily - smaller unit must be defined.
+Refine times by appending more specific units.
+Induce order on units. If A contains B, A>B. If (number of A in B) depends on C, C>A.
+
+
+Functions: start, time, number of components, length(in _unit_), time until/since(in _units_).
+
+
+Epoch = AD or BC
+Year = integer
+Epoch contains years
+1AD follows 1BC
+Month = periodic January, February, ..., December
+Year contains months
+Day = integer
+Month contains days (January: 31, February: 28 if not leap year, 29 if leap year,... )
+Hour = periodic 00 - 23
+Day contains hours
+Minute = periodic 00 - 59
+Hour contains minutes
+Second = periodic 00 - 59
+Minute contains seconds
+Weekday = periodic Monday, Tuesday,..., Sunday
+Day maps onto weekday
+
+
