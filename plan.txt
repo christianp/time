@@ -33,3 +33,15 @@ Weekday = periodic Monday, Tuesday,..., Sunday
 Day maps onto weekday
 
 
+size of an interval A-B:
+
+in order to form an interval:
+two timepoints must have the same top unit
+
+go to the bottom unit of A
+count up until the end of that unit / the value of B at that unit
+repeat until all units agree
+
+2000 AD - 2000 AD is 1 year
+2000 AD - 2001 AD is 2 years
+2000 AD - 2001 AD January is 1 year, 1 month

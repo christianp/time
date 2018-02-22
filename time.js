@@ -106,9 +106,42 @@ class Unit {
 		throw(new Error('base Unit class can\'t make an instance'));
 	}
 
+    make_sensible(t) {
+        throw(new Error('base Unit class can\'t make a time sensible'));
+    }
+
 	toString() {
 		return this.name;
 	}
+
+    size(t) {
+        if(this.subunit) {
+            let u = this;
+            while(u.subunit) {
+                u = u.subunit;
+                if(t.has_unit(u)) {
+                    return 0;
+                }
+            }
+        }
+
+        let u = this;
+        while(!t.has_unit(u)) {
+            if(!u.superunit) {
+                throw(new Error(`Can't work out size of ${t} in units of ${this.name}`));
+            }
+            u = u.superunit;
+        }
+        let size = 0;
+        while(u!=this) {
+            
+        }
+        return size;
+    }
+
+    times(n) {
+        return new Duration([[this,n]]);
+    }
 }
 
 class EnumUnit extends Unit {
@@ -123,6 +156,10 @@ class EnumUnit extends Unit {
 		const ib = this.sequence.indexOf(b.get_unit(this));
 		return ia>ib ? 1 : ia<ib ? -1 : 0;
 	}
+
+    subunit_size(t) {
+        return this.sequence.length;
+    }
 
 	item_is_valid(item) {
 		return this.sequence.indexOf(item)>=0;
@@ -170,6 +207,28 @@ class EnumUnit extends Unit {
 		nt.set_unit(this, this.sequence[i]);
 		return nt;
 	}
+
+    first(t) {
+        return this.sequence[0];
+    }
+    last(t) {
+        return this.sequence[this.sequence.length-1];
+    }
+
+    make_sensible(t) {
+        const item = t.get_unit(this);
+        const oi = this.sequence.indexOf(item)-1;
+        let i = oi;
+        if(i<0) {
+            i = 0;
+        }
+        if(i>=this.sequence.length) {
+            i = this.sequence.length;
+        }
+        if(i!=oi) {
+            t.set_unit(this,this.sequence[i]);
+        }
+    }
 }
 
 class IntUnit extends Unit {
@@ -179,14 +238,41 @@ class IntUnit extends Unit {
 		this.end = end;
 	}
 
+    first(t) {
+        if(this.superunit) {
+            const dir = this.get_direction(t);
+            return dir=='inc' ? this.start : this.get_end(t);
+        } else {
+            return this.start;
+        }
+    }
+    last(t) {
+        if(this.superunit) {
+            const dir = this.get_direction(t);
+            return dir=='dec' ? this.start : this.get_end(t);
+        } else {
+            return this.get_end(t);
+        }
+    }
+
+    subunit_size(t) {
+        if(!this.superunit) {
+            return 0;
+        }
+        const end = this.get_end(t);
+        if(end===undefined) {
+            return Infinity;
+        } else {
+            return end - this.start + 1;
+        }
+    }
+
 	compare_values(a,b) {
-		if(this.superunit && a.has_unit(this.superunit)) {
-			const direction = this.get_direction(a);
-			const ia = a.get_unit(this);
-			const ib = a.get_unit(this);
-			const mul = {'inc': 1, 'dec': -1}[direction];
-			return mul*(a>b ? 1 : b<a ? -1 : 0);
-		}
+        const direction = this.get_direction(a);
+        const ia = a.get_unit(this);
+        const ib = b.get_unit(this);
+        const mul = {'inc': 1, 'dec': -1}[direction];
+        return mul*(ia>ib ? 1 : ia<ib ? -1 : 0);
 	}
 
 	item_is_valid(n) {
@@ -310,31 +396,27 @@ class IntUnit extends Unit {
 		}
 		return t;
 	}
+
+    make_sensible(t) {
+        const value = t.get_unit(this);
+        if(value<this.start) {
+            t.set_unit(this,this.start);
+        }
+        try {
+            const end = this.get_end(t);
+            if(value>end) {
+                t.set_unit(this,end);
+            }
+        } catch(e) {
+            throw(e);
+        }
+    }
 }
 
-class TimePoint {
-	constructor(units) {
-		this.units = units;
-	}
-
-	static compare(a,b) {
-		const units = Array.from(new Set(a.units.concat(b.units).map(def=>def[0])));
-		units.sort(Unit.compare);
-		for(let unit of units) {
-			if(!a.has_unit(unit) || !b.has_unit(unit)) {
-				throw(new Error(`One timepoint has a ${unit.name} but the other doesn't: ${a} vs ${b}`));
-			}
-			const res = unit.compare_values(a, b);
-			if(res!=0) {
-				return res;
-			}
-		}
-		return 0;
-	}
-
-	clone() {
-		return new TimePoint(this.units.slice());
-	}
+class HasTimeUnits {
+    constructor(units) {
+        this.units = units;
+    }
 
 	assert_has(unit) {
 		if(!this.has_unit(unit)) {
@@ -353,7 +435,48 @@ class TimePoint {
 
 	set_unit(unit,item) {
 		const i = this.units.findIndex(def=>def[0]==unit);
-		this.units[i] = [unit,item];
+        if(i==-1) {
+            this.units.push([unit,item]);
+        } else {
+    		this.units[i] = [unit,item];
+        }
+	}
+
+    units_in_order() {
+        return this.units.sort((a,b)=>Unit.compare(a[0],b[0]));
+    }
+	
+	merge(... ts) {
+		const thist = this.clone();
+        ts.forEach(t=>{
+    		t.units.forEach(def=>thist.set_unit(def[0],def[1]));
+        })
+        return thist;
+	}
+
+	clone() {
+		return new this.constructor(this.units.slice());
+	}
+}
+
+class TimePoint extends HasTimeUnits {
+	constructor(units) {
+		super(units);
+	}
+
+	static compare(a,b) {
+		const units = Array.from(new Set(a.units.concat(b.units).map(def=>def[0])));
+		units.sort(Unit.compare);
+		for(let unit of units) {
+			if(!a.has_unit(unit) || !b.has_unit(unit)) {
+				throw(new Error(`One timepoint has a ${unit.name} but the other doesn't: ${a} vs ${b}`));
+			}
+			const res = unit.compare_values(a, b);
+			if(res!=0) {
+				return res;
+			}
+		}
+		return 0;
 	}
 
 	includes(t) {
@@ -363,9 +486,18 @@ class TimePoint {
 		});
 	}
 
+    make_sensible() {
+        const t = this.clone();
+        const units = this.units_in_order();
+        units.forEach(def=>{
+            def[0].make_sensible(t);
+        });
+        return t;
+    }
+
 	toString() {
-		this.units.sort((a,b)=>Unit.compare(a[0],b[0]));
-		return this.units.map(def=>{const [unit,item] = def; return `${unit.name}: ${item}`}).join(', ');
+		const units = this.units_in_order();
+		return units.map(def=>{const [unit,item] = def; return `${unit.name}: ${item}`}).join(', ');
 	}
 
 	static combine(... points) {
@@ -380,17 +512,104 @@ class TimePoint {
 		});
 		return np;
 	}
-	
-	merge(t) {
-		const thist = this;
-		t.units.forEach(def=>thist.set_unit(def[0],def[1]));
-	}
+
+    add(duration) {
+        let t = this.clone();
+        duration.units.forEach(def=>{
+            const [unit,n] = def;
+            for(let i=0;i<n;i++) {
+                t = unit.next(t);
+            }
+        });
+        return t.make_sensible();
+    }
+    subtract(duration) {
+        let t = this.clone();
+        duration.units.forEach(def=>{
+            const [unit,n] = def;
+            for(let i=0;i<n;i++) {
+                t = unit.previous(t);
+            }
+        });
+        return t.make_sensible();
+    }
 }
 class Time {
 	constructor(start,end) {
+        const start_units = start.units_in_order().map(def=>def[0]);
+        const end_units = end.units_in_order().map(def=>def[0]);
+        if(start_units[0][0]!=end_units[0][0]) {
+            throw(new Error(`Start and end don't have the same units: ${start} vs ${end}`));
+        }
+        if(start_units.length<end_units.length) {
+            start = start.clone();
+            for(let i=start_units.length; i<end_units.length; i++) {
+                start.set_unit(end_units[i], end_units[i].first(start));
+            }
+        }
+        if(end_units.length<start_units.length) {
+            end = end.clone();
+            for(let i=end_units.length; i<start_units.length; i++) {
+                end.set_unit(start_units[i], start_units[i].last(end));
+            }
+        }
+        if(TimePoint.compare(start,end)>0) {
+            [start,end] = [end,start];
+        }
 		this.start = start;
 		this.end = end;
 	}
+    
+    toString() {
+        return `${this.start} - ${this.end}`;
+    }
+
+    size() {
+        let t = this.start.clone();
+        let end = this.end;
+        let units = t.units_in_order().map(def=>def[0]);
+        const sizes = [];
+        let i = 0;
+        function units_ok(t,target,units) {
+            return units.every(u=>t.get_unit(u)==target.get_unit(u));
+        }
+        while(i<units.length) {
+            let u = units[i];
+            let added = 0;
+            let ot = t;
+            while(!units_ok(t,end,units.slice(0,i+1))) {
+                ot = t;
+                t = u.next(t);
+                added += 1;
+            }
+            if(TimePoint.compare(t,end)>0) {
+                t = ot;
+                added -= 1;
+            }
+            i += 1;
+            sizes.push([u,added]);
+        }
+        return new Duration(sizes);
+    }
+
+    add(duration) {
+        return new Time(this.start.add(duration), this.end.add(duration));
+    }
+
+    subtract(duration) {
+        return new Time(this.start.subtract(duration), this.end.subtract(duration));
+    }
+}
+
+class Duration extends HasTimeUnits {
+    toString() {
+        const units = this.units_in_order().filter(def=>def[1]!=0);
+        if(units.length) {
+            return units.map(def=>`${def[1]} ${def[0]}${def[1]!=1 ? 's' : ''}`).join(', ');
+        } else {
+            return '0';
+        }
+    }
 }
 
 const c = TimePoint.combine;
@@ -444,3 +663,5 @@ const bc1 = c(year(1),bc);
 console.log(Year.next(bc1)+'');
 console.log(Year.previous(bc1)+'');
 console.log(Month.next(c(month('December'),bc1)));
+
+const t1 = new Time(c(ad,year(2),month('February')),c(ad,year(9),month('January'),day(1),hour(0)));
