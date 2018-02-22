@@ -303,11 +303,12 @@ scope.add_symbol('has',new Op(
     }
 ));
 scope.add_symbol('has',new Op(accept_only(Unit,Unit), (_,a,b)=>{a.has(b); return a;}));
-scope.add_symbol('in',new Op(accept_only(Unit,Time), (_,unit,t)=>t.size_in(unit)));
+scope.add_symbol('in',new Op(accept_only(Unit,Time), (_,unit,t)=>new Number(t.size_in(unit))));
 scope.add_symbol('*',new Op(accept_any_order(Number,Unit), unordered((_,unit,n)=>unit.times(n))));
 scope.add_symbol('*',new Op(accept_any_order(Number,Duration), unordered((_,duration,n)=>duration.times(n))));
 scope.add_symbol('+',new Op(accept_only(Duration,Duration), (_,a,b)=>Duration.add(a,b)))
 scope.add_symbol('+',new Op(accept_any_order(Duration,TimePoint), (_,t,d)=>t.add(d)));
+scope.add_symbol('-',new Op(accept_any_order(Duration,TimePoint), (_,t,d)=>t.subtract(d)));
 
 export const parser = new Parser(scope);
 parser.evaluate('Int Year 1');

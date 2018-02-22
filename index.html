@@ -5,6 +5,25 @@
         <script type="module">
             import * as lang from './lang.js';
             window.lang = lang;
+
+            const input = document.getElementById('expr');
+            const eval_button = document.getElementById('eval');
+            const output = document.getElementById('output');
+
+            eval_button.addEventListener('click',function() {
+                const expr = input.value;
+                try {
+                    const res = lang.parser.evaluate(expr);
+                    output.textContent += `* ${res}\n`;
+                } catch(e) {
+                    output.textContent +=`ERROR: ${e.message}\n`;
+                }
+            });
         </script>
 	</head>
+    <body>
+        <textarea id="expr"></textarea>
+        <div><button type="button" id="eval">Evaluate</button></div>
+        <pre id="output"></pre>
+    </body>
 </html>
