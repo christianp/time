@@ -119,31 +119,6 @@ class Unit {
 		return this.name;
 	}
 
-    size(t) {
-        if(this.subunit) {
-            let u = this;
-            while(u.subunit) {
-                u = u.subunit;
-                if(t.has_unit(u)) {
-                    return 0;
-                }
-            }
-        }
-
-        let u = this;
-        while(!t.has_unit(u)) {
-            if(!u.superunit) {
-                throw(new Error(`Can't work out size of ${t} in units of ${this.name}`));
-            }
-            u = u.superunit;
-        }
-        let size = 0;
-        while(u!=this) {
-            
-        }
-        return size;
-    }
-
     times(n) {
         return new Duration([[this,n]]);
     }
@@ -161,10 +136,6 @@ class EnumUnit extends Unit {
 		const ib = this.sequence.indexOf(b.get_unit(this));
 		return ia>ib ? 1 : ia<ib ? -1 : 0;
 	}
-
-    subunit_size(t) {
-        return this.sequence.length;
-    }
 
 	item_is_valid(item) {
 		return this.sequence.indexOf(item)>=0;
@@ -260,18 +231,6 @@ class IntUnit extends Unit {
         }
     }
 
-    subunit_size(t) {
-        if(!this.superunit) {
-            return 0;
-        }
-        const end = this.get_end(t);
-        if(end===undefined) {
-            return Infinity;
-        } else {
-            return end - this.start + 1;
-        }
-    }
-
 	compare_values(a,b) {
         const direction = this.get_direction(a);
         const ia = a.get_unit(this);
@@ -303,6 +262,7 @@ class IntUnit extends Unit {
 		}
 		const sup = t.get_unit(this.superunit);
 		if(sup===undefined) {
+            // TODO: could I just use get_subdivision?
             const subdivisions = this.superunit.subdivisions;
             if(subdivisions===undefined) {
                 return 'inc';
@@ -571,7 +531,7 @@ class Time {
         return `${this.start} - ${this.end}`;
     }
 
-    size() {
+    duration() {
         let t = this.start.clone();
         let end = this.end;
         let units = t.units_in_order().map(def=>def[0]);
@@ -599,6 +559,19 @@ class Time {
         return new Duration(sizes);
     }
 
+    size_in(unit) {
+        let n = 0;
+        let t = this.start.clone();
+        while(TimePoint.compare(t,this.end)<0) {
+            t = unit.next(t);
+            n += 1;
+        }
+        if(TimePoint.compare(t,this.end)>0) {
+            n -= 1;
+        }
+        return n;
+    }
+
     add(duration) {
         return new Time(this.start.add(duration), this.end.add(duration));
     }
@@ -624,13 +597,27 @@ class Duration extends HasTimeUnits {
         }
         return new Duration(this.units.map(d=>[d[0],n*d[1]]));
     }
+
+    static add(a,b) {
+        const c = a.clone();
+        b.units.forEach(def=>{
+            const [unit,n] = def;
+            if(c.has_unit(unit)) {
+                c.set_unit(unit,c.get_unit(unit)+n);
+            } else {
+                c.set_unit(unit,n);
+            }
+        });
+        return c;
+    }
 }
 
+/*
 const factory = unit=>unit.instance.bind(unit);
 
 const c = TimePoint.combine;
 
-const Epoch = new EnumUnit('Epoch', ['BC','AD'], periodic = false);
+const Epoch = new EnumUnit('Epoch', ['BC','AD'], false);
 const ad = Epoch.instance('AD');
 const bc = Epoch.instance('BC');
 
@@ -685,3 +672,6 @@ console.log(Year.previous(bc1)+'');
 console.log(Month.next(c(month('December'),bc1)));
 
 const t1 = new Time(c(ad,year(2),month('February')),c(ad,year(9),month('January'),day(1),hour(0)));
+*/
+
+export {Unit, IntUnit, EnumUnit, TimePoint, Time, Duration};
