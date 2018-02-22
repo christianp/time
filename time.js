@@ -53,12 +53,17 @@ class Unit {
 
 	get_subdivision(t) {
         const item = t.get_unit(this);
-        if(item===undefined) {
-            throw(new Error(`Can't work subdivision: has no ${this.name}`));
-        }
 		if(this.subdivisions===undefined) {
 			return {direction:'inc'};
-		} else if(this.subdivisions[item]!==undefined) {
+        }
+        if(item===undefined) {
+			if(new Set(Object.values(this.subdivisions)).size == 1) {
+                return this.subdivisions[0];
+            } else {
+                return {direction: 'inc'};
+            }
+        }
+		if(this.subdivisions[item]!==undefined) {
 			const def = this.subdivisions[item];
             if(typeof(def)=='function') {
                 return def(t)
@@ -283,8 +288,8 @@ class IntUnit extends Unit {
 		this.assert_valid(n);
 		n = Math.floor(n);
 		if(this.end!==undefined) {
-			const gap = this.end - this.start;
-			const r = (n-this.start)%gap;
+			const gap = this.end + 1 - this.start;
+			const r = (n-this.start) % gap;
 			n = this.start + r;
 		} else if(n<this.start) {
 			throw(new Error(`Value ${n} is too low for ${this.name}`));
@@ -298,6 +303,10 @@ class IntUnit extends Unit {
 		}
 		const sup = t.get_unit(this.superunit);
 		if(sup===undefined) {
+            const subdivisions = this.superunit.subdivisions;
+            if(subdivisions===undefined) {
+                return 'inc';
+            }
 			if(new Set(Object.values(this.superunit.subdivisions)).size > 1) {
 				throw(new Error(`Need to know ${this.superunit.name} to know next ${this.name}`));
 			} else {
@@ -319,12 +328,10 @@ class IntUnit extends Unit {
 				return nt;
 			}
             nt.set_unit(this, n + ({'inc':1,'dec':-1}[this.get_direction(t)]));
-			return this.wrap(nt);
 		} else {
             nt.set_unit(this, n+1);
-			return this.wrap(nt);
 		}
-		return nt;
+        return this.wrap(nt);
 	}
 
 	previous(t) {
@@ -371,7 +378,7 @@ class IntUnit extends Unit {
                 const inc = this.get_direction(t)=='inc';
                 t = inc ? this.superunit.next(t) : this.superunit.previous(t);
             }
-            n -= end;
+            n -= end+1-this.start;
             end = this.get_end(t);
             const ninc = this.get_direction(t)=='inc';
             if(!ninc) {
@@ -610,7 +617,16 @@ class Duration extends HasTimeUnits {
             return '0';
         }
     }
+
+    times(n) {
+        if(n<0) {
+            throw(new Error(`Can't have a negative duration`));
+        }
+        return new Duration(this.units.map(d=>[d[0],n*d[1]]));
+    }
 }
+
+const factory = unit=>unit.instance.bind(unit);
 
 const c = TimePoint.combine;
 
@@ -619,16 +635,16 @@ const ad = Epoch.instance('AD');
 const bc = Epoch.instance('BC');
 
 const Year = new IntUnit('Year', 1);
-const year = Year.instance.bind(Year);
+const year = factory(Year);
 Epoch.has(Year, {'BC': {direction:'dec'}, 'AD': {direction:'inc'}});
 Epoch.join(c(year(1),bc), c(year(1),ad))
 
 const Month = new EnumUnit('Month', ['January','February','March','April','May','June','July','August','September','October','November','December']);
-const month = Month.instance.bind(Month);
+const month = factory(Month);
 Year.has(Month);
 
 const Day = new IntUnit('Day',1);
-const day = Day.instance.bind(Day);
+const day = factory(Day);
 Month.has(Day,
     {
         'January':{'direction':'inc',end:31},
@@ -647,8 +663,12 @@ Month.has(Day,
 );
 
 const Hour = new IntUnit('Hour',0,23);
-const hour = Hour.instance.bind(Hour);
+const hour = factory(Hour);
 Day.has(Hour);
+
+const Minute = new IntUnit('Minute',0,59);
+const minute = factory(Minute);
+Hour.has(Minute);
 
 const ad2000 = c(year(2000),ad);
 console.log(ad2000+'');
