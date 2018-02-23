@@ -1,6 +1,6 @@
 class Unit {
 	constructor(name) {
-		this.name = name;
+		this.name = name.toString();
 		this.subunit = null;
 		this.subdivisions = null;
 		this.superunit = null;

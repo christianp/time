@@ -11,12 +11,18 @@
             const output = document.getElementById('output');
 
             eval_button.addEventListener('click',function() {
-                const expr = input.value;
+                console.clear();
+                const code = input.value;
+                console.log(`code: ${code}`);
                 try {
-                    const res = lang.parser.evaluate(expr);
+                    const expr = lang.parser.parse(code);
+                    console.log('expr:',expr);
+                    const res = expr.evaluate();
+                    console.log(`result:`,res);
                     output.textContent += `* ${res}\n`;
                 } catch(e) {
                     output.textContent +=`ERROR: ${e.message}\n`;
+                    console.error(e);
                 }
             });
         </script>
