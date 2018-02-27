@@ -12,6 +12,32 @@ class Unit {
 		return units.sort(Unit.compare);
 	}
 
+    do_for_all_mapped(fn,t) {
+        const done = new Set([this]);
+        const queue = [this];
+        let changed = true;
+        while(queue.length) {
+            const u = queue.pop();
+            t = fn(u,t);
+            u.maps.forEach(m => {
+                const u2 = m.unit;
+                if(t.has_unit(u2) && !done.has(u2)) {
+                    done.add(u2);
+                    queue.push(u2);
+                }
+            });
+        }
+        return t;
+    }
+
+    next(t) {
+        return this.do_for_all_mapped((u,t)=>u.next_just_this(t),t);
+    }
+
+    previous(t) {
+        return this.do_for_all_mapped((u,t)=>u.previous_just_this(t),t);
+    }
+
 	static compare(a,b) {
 		let p = a.superunit;
 		while(p!==null && p!==b) {
@@ -162,7 +188,7 @@ class EnumUnit extends Unit {
 		return new TimePoint([[this,item]]);
 	}
 
-	next(t) {
+	next_just_this(t) {
 		t.assert_has(this);
 		let nt = t.clone();
 		const item = t.get_unit(this);
@@ -181,7 +207,7 @@ class EnumUnit extends Unit {
 		return nt;
 	}
 
-	previous(t) {
+	previous_just_this(t) {
 		t.assert_has(this);
 		let nt = t.clone();
 		const item = t.get_unit(this);
@@ -293,7 +319,7 @@ class IntUnit extends Unit {
 		}
 	}
 
-	next(t) {
+	next_just_this(t) {
 		t.assert_has(this);
 		let nt = t.clone();
 		const n = t.get_unit(this);
@@ -310,7 +336,7 @@ class IntUnit extends Unit {
         return this.wrap(nt);
 	}
 
-	previous(t) {
+	previous_just_this(t) {
 		t.assert_has(this);
 		const nt = t.clone();
 		const n = t.get_unit(this);
@@ -548,7 +574,6 @@ class TimePoint extends HasTimeUnits {
                 t = unit_to_map.previous(t);
                 ot = unit.next(ot);
             }
-            console.log(ot+'');
             return ot;
         } else if(d<0) {
             while(TimePoint.compare(t,map.from)<0) {
@@ -669,17 +694,14 @@ class Time {
         }
         const map = unit.maps.find(u=>{
             try {
-                console.log(`try ${u.unit}`);
                 return this.first(u.unit);
             } catch(e) {
-                console.log(e);
                 return false;
             }
         });
         if(map) {
             const ot = this.first(map.unit);
-            ot.set_unit(unit, ot.map_to(unit).get_unit(unit));
-            return ot;
+            return TimePoint.combine(ot, ot.map_to(unit));
         }
         throw(new Error(`Can't work out first ${unit} in ${t}`));
     }
@@ -688,15 +710,6 @@ class Time {
         const t = this.end;
         if(t.has_unit(unit)) {
             return t.remove_subunits(unit);
-        }
-
-        const unit_to_map = t.get_unit_to_map_to(unit);
-        if(unit_to_map) {
-            const ot = this.first(unit_to_map);
-            if(ot) {
-                ot.set_unit(unit, ot.map_to(unit));
-                return ot;
-            }
         }
 
         let sup = unit.superunit;
@@ -822,7 +835,6 @@ export class Formatter {
         }
         let s = n+'';
         const diff = zeros.length+1-s.length;
-        console.log(n,zeros,diff);
         if(diff>0) {
             s = zeros.slice(0,diff)+s;
         }
