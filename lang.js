@@ -1,4 +1,4 @@
-import {Unit, IntUnit, EnumUnit, Time, TimePoint, Duration} from './time.js';
+import {Unit, IntUnit, EnumUnit, Time, TimePoint, Duration, Formatter} from './time.js';
 import * as time from './time.js';
 
 window.time = time;
@@ -23,6 +23,10 @@ export class Expression {
             if(stack[i] instanceof LSymbol && (i==0 || !(stack[i-1] instanceof LSymbol && stack[i-1].symbol==':='))) {
                 const symbol = this.scope.get_symbol(stack[i].symbol);
                 const value = symbol.get_meaning(stack.slice(i+1));
+                if(symbol.symbol=='nice') {
+                    console.log(stack.slice());
+                    console.log(value);
+                }
                 if(value!==undefined) {
                     stack[i] = value;
                 }
@@ -132,6 +136,7 @@ export const never = () => false;
 export class Scope {
     constructor() {
         this.symbols = {};
+        this.formatters = [];
     }
 
     get_symbol(symbol) {
@@ -145,6 +150,15 @@ export class Scope {
             this.symbols[symbol] = new LSymbol(symbol);
         }
         this.symbols[symbol].add_meaning(value);
+    }
+
+    add_formatter(f) {
+        this.formatters.push(f);
+        this.formatters.sort( (a, b) => a.units.length > b.units.length ? -1 : a.units.length < b.units.length ? 1 : 0 );
+    }
+
+    formatter_for(t) {
+        return this.formatters.find(f=>f.can_apply(t));
     }
 }
 
@@ -266,9 +280,16 @@ export class Parser {
             return {token: new String(m.token), pos: pos, end: m.end};
         }
     }
+    
+    get_string(pos = 0) {
+        const m = this.match(/^"([^"]*)"/, pos);
+        if(m) {
+            return {token: new String(m.match[1]), pos: pos, end: m.end};
+        }
+    }
 
     get_token(pos = 0) {
-        return this.get_symbol(pos) || this.get_number(pos) || this.get_name(pos);
+        return this.get_symbol(pos) || this.get_number(pos) || this.get_name(pos) || this.get_string(pos);
     }
 }
 
@@ -279,13 +300,44 @@ function unordered(fn) {
 }
 
 export const scope = new Scope();
-scope.add_symbol('+', new Op(accept_only(Number, Number), (_, a, b) => new Number(a+b)));
-scope.add_symbol('-', new Op(accept_only(Number, Number), (_, a, b) => new Number(a-b)));
-scope.add_symbol('-', new Op(accept_only(Number), (_, a) => new Number(-a)));
-scope.add_symbol('*', new Op(accept_only(Number, Number), (_, a, b) => new Number(a*b)));
-scope.add_symbol('/', new Op(accept_only(Number, Number), (_, a, b) => new Number(Math.floor(a/b))));
-scope.add_symbol('%', new Op(accept_only(Number, Number), (_, a, b) => new Number(a%b)));
-scope.add_symbol(']', new Op(never, never));
+const add_op = (name, ... args) => scope.add_symbol(name, new Op(... args));
+
+// set variable
+add_op(':=', accept_only(String, any_token), (scope, name, value) => scope.add_symbol(name.valueOf(), value));
+add_op(':=', accept_only(LSymbol, any_token), (scope, symbol, value) => scope.add_symbol(symbol.symbol, value));
+
+function lambda_args(tokens) {
+    let i = 0;
+    while(i<tokens.length && (tokens[i] instanceof String || tokens[i] instanceof LSymbol)) {
+        i += 1;
+    }
+    if(i<tokens.length && tokens[i] instanceof Array) {
+        return i+1;
+    }
+    return false;
+}
+
+// lambda
+scope.add_symbol('\\', new Op(
+    lambda_args, 
+    (scope, ... tokens) => {
+        const named_params = tokens.slice(0, tokens.length-1).map(x => x.toString());
+        const expr = tokens[tokens.length-1];
+        return new Lambda(new Expression(expr, scope), named_params);
+    }
+));
+add_op('\\', accept_only(Array), (scope, tokens) => new Lambda(new Expression(tokens, scope), []));
+
+// number arithmetic
+add_op('+', accept_only(Number, Number), (_, a, b) => new Number(a+b));
+add_op('-', accept_only(Number, Number), (_, a, b) => new Number(a-b));
+add_op('-', accept_only(Number), (_, a) => new Number(-a));
+add_op('*', accept_only(Number, Number), (_, a, b) => new Number(a*b));
+add_op('/', accept_only(Number, Number), (_, a, b) => new Number(Math.floor(a/b)));
+add_op('%', accept_only(Number, Number), (_, a, b) => new Number(a%b));
+
+// lists
+add_op(']', never, never);
 scope.add_symbol('[', new Op(
     tokens => {
         for(let i=0;i<tokens.length;i++) {
@@ -302,7 +354,7 @@ scope.add_symbol('[', new Op(
 
 const re_unit_name = /^[A-Z][a-zA-Z_]/;
 
-scope.add_symbol('Enum', new Op(
+scope.add_symbol('sequence', new Op(
     accept_all(accept_only(String, Array), (tokens) => tokens[0].match(re_unit_name) && tokens[1].every(x => x instanceof String) && 2), 
     (scope, name, sequence) => {
         sequence = sequence.map(x => x.valueOf());
@@ -312,7 +364,17 @@ scope.add_symbol('Enum', new Op(
         return unit;
     }
 ));
-scope.add_symbol('Int', new Op(
+scope.add_symbol('int', new Op(
+    accept_all(accept_only(String, Number, Number), (tokens) => tokens[0].match(re_unit_name)), 
+    (scope, name, start, end) => {
+        const unit = new IntUnit(name, start, end);
+        scope.add_symbol(name.toLowerCase(), new Op(accept_only(Number), (_, n) => unit.instance(n.valueOf())));
+        scope.add_symbol(name, unit);
+        return unit;
+    }
+));
+
+scope.add_symbol('int', new Op(
     accept_all(accept_only(String, Number), (tokens) => tokens[0].match(re_unit_name)), 
     (scope, name, start) => {
         const unit = new IntUnit(name, start);
@@ -321,9 +383,13 @@ scope.add_symbol('Int', new Op(
         return unit;
     }
 ));
-scope.add_symbol('p', new Op(accept_all(accept_only(EnumUnit, String), (tokens) => tokens[0].item_is_valid(tokens[1].valueOf())), (_, unit, item) => unit.instance(item.valueOf())));
-scope.add_symbol('-', new Op(accept_only(TimePoint, TimePoint), (_, a, b) => new Time(a, b)));
-scope.add_symbol('d', new Op(accept_only(Time), (_, t) => t.duration()));
+// time range
+add_op('-', accept_only(TimePoint, TimePoint), (_, a, b) => new Time(a, b));
+
+// duration
+add_op('d', accept_only(Time), (_, t) => t.duration());
+
+// combine timepoints
 scope.add_symbol('c', new Op(
     accept_all(
         accept_only(Array), 
@@ -369,6 +435,7 @@ function enum_has_cases(supunit, subunit, tokens) {
     return def;
 }
 
+// has unit subunit
 scope.add_symbol('has', new Op(
     accept_all(
         accept_only(EnumUnit, Unit, Array), 
@@ -383,46 +450,70 @@ scope.add_symbol('has', new Op(
         return sup;
     }
 ));
-scope.add_symbol('has', new Op(accept_only(Unit, Unit), (_, a, b) => {a.has(b); return a;}));
-scope.add_symbol('in', new Op(accept_only(Unit, Time), (_, unit, t) => new Number(t.size_in(unit))));
-scope.add_symbol('*', new Op(accept_any_order(Number, Unit), unordered((_, unit, n) => unit.times(n))));
-scope.add_symbol('*', new Op(accept_any_order(Number, Duration), unordered((_, duration, n) => duration.times(n))));
+add_op('has', accept_only(Unit, Unit), (_, a, b) => {a.has(b); return a;});
+
+// size of t in unit
+add_op('in', accept_only(Unit, Time), (_, unit, t) => new Number(t.size_in(unit)));
+
+// duration arithmetic
+add_op('*', accept_any_order(Number, Unit), unordered((_, unit, n) => unit.times(n)));
+add_op('*', accept_any_order(Number, Duration), unordered((_, duration, n) => duration.times(n)));
 scope.add_symbol('+', new Op(accept_only(Duration, Duration), (_, a, b) => Duration.add(a, b)))
-scope.add_symbol('+', new Op(accept_any_order(Duration, TimePoint), (_, d, t) => t.add(d)));
-scope.add_symbol('-', new Op(accept_any_order(Duration, TimePoint), (_, d, t) => t.subtract(d)));
-scope.add_symbol(':=', new Op(accept_only(String, any_token), (scope, name, value) => scope.add_symbol(name.valueOf(), value)));
-scope.add_symbol(':=', new Op(accept_only(LSymbol, any_token), (scope, symbol, value) => scope.add_symbol(symbol.symbol, value)));
+add_op('+', accept_any_order(Duration, TimePoint), (_, d, t) => t.add(d));
+add_op('-', accept_any_order(Duration, TimePoint), (_, d, t) => t.subtract(d));
 
-function lambda_args(tokens) {
-    let i = 0;
-    while(i<tokens.length && (tokens[i] instanceof String || tokens[i] instanceof LSymbol)) {
-        i += 1;
-    }
-    if(i<tokens.length && tokens[i] instanceof Array) {
-        return i+1;
-    }
-    return false;
-}
+add_op('next', accept_only(Unit, TimePoint), (_, u, t) => u.next(t).make_sensible());
+add_op('previous', accept_only(Unit, TimePoint), (_, u, t) => u.previous(t).make_sensible());
 
-scope.add_symbol('\\', new Op(
-    lambda_args, 
-    (scope, ... tokens) => {
-        const named_params = tokens.slice(0, tokens.length-1).map(x => x.toString());
-        const expr = tokens[tokens.length-1];
-        return new Lambda(new Expression(expr, scope), named_params);
+add_op('first', accept_only(Unit, Time), (_, u, t) => t.first(u));
+add_op('last', accept_only(Unit, Time), (_, u, t) => t.last(u));
+add_op('list', accept_only(Unit, Time), (_, u, t) => t.list(u));
+
+add_op('format', accept_all(accept_only(String, Array), tokens => tokens[1].every(x=>x instanceof Unit)), (scope, str, units) => {
+    const f = new Formatter(str.valueOf(), units);
+    scope.add_formatter(f);
+    return f;
+});
+add_op('f', accept_all(accept_only(String, Array,TimePoint), tokens => tokens[1].every(x=>x instanceof Unit)), (scope, str, units, t) => {
+    const f = new Formatter(str.valueOf(), units);
+    return f.apply(t);
+});
+add_op('f', accept_only(Formatter, TimePoint), (_, formatter, t) => new String(formatter.apply(t)));
+add_op('f', 
+    accept_only(TimePoint), 
+    (scope, t) => {
+        const f = scope.formatter_for(t);
+        if(!f) {
+            return t.toString();
+        }
+        return f.apply(t);
     }
-));
-scope.add_symbol('\\', new Op(accept_only(Array), (scope, tokens) => new Lambda(new Expression(tokens, scope), [])));
+);
+
+add_op('map', accept_only(Unit,Unit,TimePoint,TimePoint), (_, a, b, from, to) => a.add_map(b, from, to));
+
+add_op('as', accept_only(Unit, TimePoint), (_, unit, t) => t.map_to(unit));
 
 export const parser = new Parser(scope);
 try {
-    parser.evaluate('Int Year 1');
-    parser.evaluate('Enum Month [ January February March April May June July August September October November December ]');
-    parser.evaluate('has Year Month');
-    parser.evaluate('Int Day 1');
-    parser.evaluate('has Month Day [January 31 February 28 March 31 April 30 May 31 June 30 July 31 August 31 September 30 October 31 November 30 December 31 ]');
-    parser.evaluate('Enum Epoch [BC AD]');
-    parser.evaluate('has Epoch Year [BC dec AD inc]')
+    const base = `
+        int Year 1
+        sequence Month [ January February March April May June July August September October November December ]
+        has Year Month
+        int Day 1
+        has Month Day [January 31 February 28 March 31 April 30 May 31 June 30 July 31 August 31 September 30 October 31 November 30 December 31 ]
+        sequence Epoch [BC AD]
+        has Epoch Year [BC dec AD inc]
+        int Hour 0 23
+        has Day Hour
+        format "1 2" [Year Epoch]
+        format "3, 1 2" [Year Epoch Month]
+        format "4nd 3, 1 2" [Year Epoch Month Day]
+        format "1nd 2" [Day Month]
+        sequence Weekday [Monday Tuesday Wednesday Thursday Friday Saturday Sunday]
+        map Day Weekday c [AD year 2018 February day 27] Tuesday
+    `.trim().split('\n');
+    base.forEach(x=>parser.evaluate(x));
 } catch(e) {
     console.error(e);
 }

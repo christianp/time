@@ -5,6 +5,7 @@ class Unit {
 		this.subdivisions = null;
 		this.superunit = null;
 		this.joins = [];
+        this.maps = [];
 	}
 
 	static order(units) {
@@ -28,6 +29,21 @@ class Unit {
 		}
 		return 0;
 	}
+
+    add_map(other,from,to) {
+        if(!from.has_unit(this)) {
+            throw(new Error(`${from} has no ${this}`));
+        }
+        if(!to.has_unit(other)) {
+            throw(new Error(`${to} has no ${other}`));
+        }
+        this.maps.push({unit: other, from: from, to: to});
+        other.maps.push({unit: this, from: to, to: from});
+    }
+
+    get_map(other) {
+        return this.maps.find(x=>x.unit==other);
+    }
 
 	assert_valid(item) {
 		if(!this.item_is_valid(item)) {
@@ -382,7 +398,7 @@ class IntUnit extends Unit {
 
 class HasTimeUnits {
     constructor(units) {
-        this.units = units;
+        this.units = units || [];
     }
 
 	assert_has(unit) {
@@ -480,6 +496,15 @@ class TimePoint extends HasTimeUnits {
 		return np;
 	}
 
+    remove_subunits(unit) {
+        const t = new TimePoint();
+        while(unit) {
+            t.set_unit(unit,this.get_unit(unit));
+            unit = unit.superunit;
+        }
+        return t;
+    }
+
     add(duration) {
         let t = this.clone();
         duration.units.forEach(def=>{
@@ -499,6 +524,40 @@ class TimePoint extends HasTimeUnits {
             }
         });
         return t.make_sensible();
+    }
+
+    get_unit_to_map_to(unit) {
+        const units = this.units_in_order().map(u=>u[0]).reverse();
+        return units.find(u=>u.get_map(unit));
+    }
+
+    map_to(unit) {
+        if(this.has_unit(unit)) {
+            return this.get_unit(unit);
+        }
+        const unit_to_map = this.get_unit_to_map_to(unit);
+        if(!unit_to_map) {
+            throw(new Error(`Can't map ${this} to ${unit}`));
+        }
+        const map = unit_to_map.get_map(unit);
+        let t = this.clone();
+        let ot = map.to;
+        const d = TimePoint.compare(t,map.from);
+        if(d>0) {
+            while(TimePoint.compare(t,map.from)>0) {
+                t = unit_to_map.previous(t);
+                ot = unit.next(ot);
+            }
+            console.log(ot+'');
+            return ot;
+        } else if(d<0) {
+            while(TimePoint.compare(t,map.from)<0) {
+                t = unit_to_map.next(t);
+                ot = unit.previous(ot);
+            }
+            return ot;
+        }
+        return ot;
     }
 }
 class Time {
@@ -579,6 +638,102 @@ class Time {
     subtract(duration) {
         return new Time(this.start.subtract(duration), this.end.subtract(duration));
     }
+
+    first(unit) {
+        const t = this.start;
+        if(t.has_unit(unit)) {
+            return t.remove_subunits(unit);
+        }
+
+        let sup = unit.superunit;
+        while(sup && !t.has_unit(sup)) {
+            sup = sup.superunit;
+        }
+        if(sup) {
+            if(t.has_unit(sup)) {
+                let ft = t.clone();
+                while(sup!=unit) {
+                    sup = sup.subunit;
+                    ft.set_unit(sup,sup.first(ft));
+                }
+                return ft.remove_subunits(unit);
+            }
+        }
+
+        let sub = unit.subunit;
+        while(sub && !t.has_unit(sub)) {
+            sub = sub.subunit;
+        }
+        if(sub && !t.has_unit(sub)) {
+            throw(new Error(`${t} has no ${unit}`));
+        }
+        const map = unit.maps.find(u=>{
+            try {
+                console.log(`try ${u.unit}`);
+                return this.first(u.unit);
+            } catch(e) {
+                console.log(e);
+                return false;
+            }
+        });
+        if(map) {
+            const ot = this.first(map.unit);
+            ot.set_unit(unit, ot.map_to(unit).get_unit(unit));
+            return ot;
+        }
+        throw(new Error(`Can't work out first ${unit} in ${t}`));
+    }
+
+    last(unit) {
+        const t = this.end;
+        if(t.has_unit(unit)) {
+            return t.remove_subunits(unit);
+        }
+
+        const unit_to_map = t.get_unit_to_map_to(unit);
+        if(unit_to_map) {
+            const ot = this.first(unit_to_map);
+            if(ot) {
+                ot.set_unit(unit, ot.map_to(unit));
+                return ot;
+            }
+        }
+
+        let sup = unit.superunit;
+        while(sup && !t.has_unit(sup)) {
+            sup = sup.superunit;
+        }
+        if(sup) {
+            if(t.has_unit(sup)) {
+                let ft = t.clone();
+                while(sup!=unit) {
+                    sup = sup.subunit;
+                    ft.set_unit(sup,sup.last(ft));
+                }
+                return ft.remove_subunits(unit);
+            }
+        }
+
+        let sub = unit.subunit;
+        while(sub && !t.has_unit(sub)) {
+            sub = sub.subunit;
+        }
+        if(sub && t.has_unit(sub)) {
+            throw(new Error(`${t} has no ${unit}`));
+        }
+        throw(new Error(`Can't work out last ${unit} in ${t}`));
+    }
+
+    list(unit) {
+        let t = this.first(unit);
+        let end = this.last(unit);
+        const list = [];
+        while(TimePoint.compare(t,end)<=0) {
+            list.push(t);
+            t = unit.next(t);
+        }
+        return list;
+    }
 }
 
 class Duration extends HasTimeUnits {
@@ -609,6 +764,73 @@ class Duration extends HasTimeUnits {
             }
         });
         return c;
+    }
+}
+
+function ordinal(n) {
+    n = Math.abs(n % 100);
+    if(n>=10 && n<20) {
+        return n+'th';
+    }
+    switch(n%10) {
+        case 1:
+            return n+'st';
+        case 2:
+            return n+'nd';
+        case 3:
+            return n+'rd';
+        default:
+            return n+'th';
+    }
+}
+
+export class Formatter {
+    constructor(str, units) {
+        this.units = units;
+        this.str = str;
+    }
+
+    can_apply(t) {
+        return this.units.every(u=>t.has_unit(u));
+    }
+
+    apply(t) {
+        return this.str.replace(/(0*)(\d+)(st|nd|rd)?/g,(m,zeros,n,th) => {
+            n = parseInt(n);
+            const unit = this.units[n-1];
+            if(!unit) {
+                throw(new Error(`No ${n}th unit`));
+            }
+            if(!t.has_unit(unit)) {
+                throw(new Error(`${t} has no ${unit}`));
+            }
+            const item = t.get_unit(unit);
+            if(unit instanceof EnumUnit && (th || zeros)) {
+                return this.format_number(unit.sequence.indexOf(item)+1,zeros,th);
+            }
+            if(unit instanceof IntUnit) {
+                return this.format_number(item, zeros, th);
+            } else {
+                return item;
+            }
+        });
+    }
+
+    format_number(n,zeros,th) {
+        if(th) {
+            return ordinal(n);
+        }
+        let s = n+'';
+        const diff = zeros.length+1-s.length;
+        console.log(n,zeros,diff);
+        if(diff>0) {
+            s = zeros.slice(0,diff)+s;
+        }
+        return s;
+    }
+
+    toString() {
+        return `${this.str} [${this.units.join(' ')}]`;
     }
 }
 
