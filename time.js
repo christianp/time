@@ -8,6 +8,10 @@ class Unit {
         this.maps = [];
 	}
 
+    static eq(a,b) {
+        return a.name == b.name;
+    }
+
 	static order(units) {
 		return units.sort(Unit.compare);
 	}
@@ -488,6 +492,10 @@ class TimePoint extends HasTimeUnits {
 		return 0;
 	}
 
+    static eq(a,b) {
+        return TimePoint.compare(a,b) == 0;
+    }
+
 	includes(t) {
 		return this.units.every(def=>{
 			const [unit,item] = def;
@@ -610,6 +618,10 @@ class Time {
 		this.start = start;
 		this.end = end;
 	}
+
+    static eq(a,b) {
+        return TimePoint.eq(a.start,b.start) && TimePoint.eq(a.end,b.end);
+    }
     
     toString() {
         return `${this.start} - ${this.end}`;
@@ -701,7 +713,7 @@ class Time {
         });
         if(map) {
             const ot = this.first(map.unit);
-            return TimePoint.combine(ot, ot.map_to(unit));
+            return ot.map_to(unit);
         }
         throw(new Error(`Can't work out first ${unit} in ${t}`));
     }
@@ -734,6 +746,17 @@ class Time {
         if(sub && t.has_unit(sub)) {
             throw(new Error(`${t} has no ${unit}`));
         }
+        const map = unit.maps.find(u=>{
+            try {
+                return this.first(u.unit);
+            } catch(e) {
+                return false;
+            }
+        });
+        if(map) {
+            const ot = this.first(map.unit);
+            return ot.map_to(unit);
+        }
         throw(new Error(`Can't work out last ${unit} in ${t}`));
     }
 
@@ -750,6 +773,25 @@ class Time {
 }
 
 class Duration extends HasTimeUnits {
+	static compare(a,b) {
+		const units = Array.from(new Set(a.units.concat(b.units).map(def=>def[0])));
+		units.sort(Unit.compare);
+		for(let unit of units) {
+			if(!a.has_unit(unit) || !b.has_unit(unit)) {
+				throw(new Error(`One timepoint has a ${unit.name} but the other doesn't: ${a} vs ${b}`));
+			}
+            const [na,nb] = [a.get_unit(unit), b.get_unit(unit)];
+			if(a!=b) {
+				return a>b ? 1 : -1;
+			}
+		}
+		return 0;
+	}
+
+    static eq(a,b) {
+        return Duration.compare(a,b) == 0;
+    }
+
     toString() {
         const units = this.units_in_order().filter(def=>def[1]!=0);
         if(units.length) {

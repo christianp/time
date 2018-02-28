@@ -23,10 +23,6 @@ export class Expression {
             if(stack[i] instanceof LSymbol && (i==0 || !(stack[i-1] instanceof LSymbol && stack[i-1].symbol==':='))) {
                 const symbol = this.scope.get_symbol(stack[i].symbol);
                 const value = symbol.get_meaning(stack.slice(i+1));
-                if(symbol.symbol=='nice') {
-                    console.log(stack.slice());
-                    console.log(value);
-                }
                 if(value!==undefined) {
                     stack[i] = value;
                 }
@@ -40,16 +36,12 @@ export class Expression {
                 if(result!==undefined) {
                     stack.splice(i, 0, result);
                 }
-                if(stack[i] instanceof Lambda) {
+                if(stack[i] instanceof Lambda && i>0) {
                     i -= 1;
                 }
-            } else if(token instanceof Lambda) {
-                const args = stack.slice(i+1);
-                if(token.accept(args)) {
-                    const result = token.evaluate(args);
-                    stack.splice(i, token.names.length+1, ... result);
-                    i += result.length - 1;
-                }
+            } else if(token instanceof Expression) {
+                stack.splice(i, 1, ... token.tokens);
+                i += token.tokens.length - 1;
             } else {
                 i -= 1;
             }
@@ -59,9 +51,22 @@ export class Expression {
         } else if(stack.length==1) {
             return stack[0];
         } else {
-            console.warn(stack.slice());
-            throw(new Error(`didn't evaluate everything: ${this.source}`));
+            console.warn('stack', stack.slice());
+            throw(new Error(`didn't evaluate everything: ${this.source}\nStack ended as: ${stack.join(' ')}`));
         }
+    }
+
+    toString() {
+        const bits = this.tokens.map(x => {
+            if(x instanceof Array) {
+                return `[ ${x.map(y => y.toString()).join(' ')} ]`;
+            } else if(x instanceof TimePoint) {
+                return this.scope.format_time(x);
+            } else {
+                return x.toString();
+            }
+        });
+        return bits.join(' ');
     }
 }
 
@@ -71,13 +76,21 @@ export class Lambda {
         this.names = names;
     }
 
+    toString() {
+        return `\\ [ ${this.names.join(' ')} ] [${this.expr}]`;
+    }
+
     accept(tokens) {
         return tokens.length>=this.names.length;
     }
 
-    evaluate(tokens) {
+    substitute(tokens) {
         const defs = {};
-        this.names.map((name, i) => defs[name] = tokens[i]);
+        this.names.map((name, i) => {
+            if(i<tokens.length) {
+                defs[name] = tokens[i];
+            }
+        });
         const out = this.expr.tokens.map(t => {
             if(t instanceof String && t in defs) {
                 return defs[t];
@@ -87,7 +100,25 @@ export class Lambda {
                 return t;
             }
         });
-        return out;
+        if(this.accept(tokens)) {
+            return new Expression(out, this.expr.scope);
+        } else {
+            return new Lambda(new Expression(out, this.expr.scope), this.names.slice(tokens.length));
+        }
+    }
+
+    evaluate(tokens) {
+        const subbed = this.substitute(tokens);
+        if(this.accept(tokens)) {
+            subbed.tokens.push(...tokens.slice(this.names.length));
+            try {
+                return subbed.evaluate();
+            } catch(e) {
+                return new Lambda(subbed, []);
+            }
+        } else {
+            return subbed;
+        }
     }
 }
 
@@ -108,7 +139,7 @@ export function accept_only(... required) {
         if(tokens.length<required.length) {
             return false;
         }
-        if(tokens.slice(0, required.length).every((t, i) => required[i]==any_token || t instanceof (required[i]))) {
+        if(tokens.slice(0, required.length).every((t, i) => required[i]==any_token ? !LSymbol.eq(tokens[i], ']') : t instanceof (required[i]))) {
             return required.length;
         }
         return false;
@@ -158,7 +189,15 @@ export class Scope {
     }
 
     formatter_for(t) {
-        return this.formatters.find(f=>f.can_apply(t));
+        return this.formatters.find(f => f.can_apply(t));
+    }
+
+    format_time(t) {
+        const f = this.formatter_for(t);
+        if(!f) {
+            return t.toString();
+        }
+        return f.apply(t);
     }
 }
 
@@ -171,6 +210,10 @@ export class LSymbol {
 
     toString() {
         return this.symbol;
+    }
+
+    static eq(other, symbol) {
+        return other instanceof LSymbol && other.symbol==symbol;
     }
 
     add_meaning(value) {
@@ -301,6 +344,34 @@ function unordered(fn) {
 
 export const scope = new Scope();
 const add_op = (name, ... args) => scope.add_symbol(name, new Op(... args));
+scope.add_symbol('true', new Boolean(true));
+scope.add_symbol('false', new Boolean(false));
+
+const tokens_equal = (a, b) => {
+    if(a.constructor != b.constructor) {
+        return false;
+    }
+    const cls = a.constructor;
+    switch(cls) {
+        case String:
+        case Number:
+        case Boolean:
+            return a.valueOf() == b.valueOf();
+        case Array:
+            return a.length==b.length && a.every((x, i) => tokens_equal(x, b[i]));
+        default:
+            return cls.eq(a, b);
+    }
+}
+
+add_op('=', 
+    tokens => {
+        return tokens.length>=2 && tokens.slice(0, 2).every(t => !(t instanceof LSymbol || t instanceof Op)) && 2;
+    }, 
+    (_, a, b) => {
+        return new Boolean(tokens_equal(a, b));
+    }
+);
 
 // set variable
 add_op(':=', accept_only(String, any_token), (scope, name, value) => scope.add_symbol(name.valueOf(), value));
@@ -327,6 +398,12 @@ scope.add_symbol('\\', new Op(
     }
 ));
 add_op('\\', accept_only(Array), (scope, tokens) => new Lambda(new Expression(tokens, scope), []));
+add_op('!', tokens => tokens[0] instanceof Lambda && tokens[0].accept(tokens.slice(1)) && tokens[0].names.length+1, 
+    (_, lambda, ... args) => {
+        const result = lambda.substitute(args);
+        return result;
+    }
+);
 
 // number arithmetic
 add_op('+', accept_only(Number, Number), (_, a, b) => new Number(a+b));
@@ -351,6 +428,18 @@ scope.add_symbol('[', new Op(
         return things.slice(0, things.length-1);
     }
 ));
+add_op('map', accept_only(Lambda, Array), (_, lambda, list) => list.map(x => lambda.evaluate([x])));
+add_op('filter', accept_only(Lambda, Array), (_, lambda, list) => list.filter(x => lambda.evaluate([x]).valueOf()));
+add_op('first', accept_only(Array), (_, list) => list[0]);
+add_op('last', accept_only(Array), (_, list) => list[list.length-1]);
+add_op('#', accept_only(Array), (_, list) => new Number(list.length));
+add_op('@', accept_only(Number, Array), (_, bn, list) => {
+    let n = bn.valueOf() % list.length;
+    if(n<0) {
+        n += list.length;
+    }
+    return list[n];
+});
 
 const re_unit_name = /^[A-Z][a-zA-Z_]/;
 
@@ -385,6 +474,7 @@ scope.add_symbol('int', new Op(
 ));
 // time range
 add_op('-', accept_only(TimePoint, TimePoint), (_, a, b) => new Time(a, b));
+add_op(':', accept_only(TimePoint), (_, a) => new Time(a, a));
 
 // duration
 add_op('d', accept_only(Time), (_, t) => t.duration());
@@ -455,6 +545,8 @@ add_op('has', accept_only(Unit, Unit), (_, a, b) => {a.has(b); return a;});
 // size of t in unit
 add_op('in', accept_only(Unit, Time), (_, unit, t) => new Number(t.size_in(unit)));
 
+add_op('just', accept_only(Unit, TimePoint), (_, unit, t) => t.remove_subunits(unit));
+
 // duration arithmetic
 add_op('*', accept_any_order(Number, Unit), unordered((_, unit, n) => unit.times(n)));
 add_op('*', accept_any_order(Number, Duration), unordered((_, duration, n) => duration.times(n)));
@@ -469,29 +561,22 @@ add_op('first', accept_only(Unit, Time), (_, u, t) => t.first(u));
 add_op('last', accept_only(Unit, Time), (_, u, t) => t.last(u));
 add_op('list', accept_only(Unit, Time), (_, u, t) => t.list(u));
 
-add_op('format', accept_all(accept_only(String, Array), tokens => tokens[1].every(x=>x instanceof Unit)), (scope, str, units) => {
+add_op('format', accept_all(accept_only(String, Array), tokens => tokens[1].every(x => x instanceof Unit)), (scope, str, units) => {
     const f = new Formatter(str.valueOf(), units);
     scope.add_formatter(f);
     return f;
 });
-add_op('f', accept_all(accept_only(String, Array,TimePoint), tokens => tokens[1].every(x=>x instanceof Unit)), (scope, str, units, t) => {
+add_op('f', accept_all(accept_only(String, Array, TimePoint), tokens => tokens[1].every(x => x instanceof Unit)), (scope, str, units, t) => {
     const f = new Formatter(str.valueOf(), units);
     return f.apply(t);
 });
 add_op('f', accept_only(Formatter, TimePoint), (_, formatter, t) => new String(formatter.apply(t)));
 add_op('f', 
     accept_only(TimePoint), 
-    (scope, t) => {
-        const f = scope.formatter_for(t);
-        if(!f) {
-            return t.toString();
-        }
-        return f.apply(t);
-    }
+    (scope, t) => scope.format_time(t)
 );
 
-add_op('map', accept_only(Unit,Unit,TimePoint,TimePoint), (_, a, b, from, to) => a.add_map(b, from, to));
-
+add_op('same', accept_only(Unit, Unit, TimePoint, TimePoint), (_, a, b, from, to) => a.add_map(b, from, to));
 add_op('as', accept_only(Unit, TimePoint), (_, unit, t) => t.map_to(unit));
 
 export const parser = new Parser(scope);
@@ -506,14 +591,17 @@ try {
         has Epoch Year [BC dec AD inc]
         int Hour 0 23
         has Day Hour
+        sequence Weekday [Monday Tuesday Wednesday Thursday Friday Saturday Sunday]
+        same Day Weekday c [AD year 2018 February day 27] Tuesday
         format "1 2" [Year Epoch]
         format "3, 1 2" [Year Epoch Month]
-        format "4nd 3, 1 2" [Year Epoch Month Day]
+        format "4th 3, 1 2" [Year Epoch Month Day]
         format "1nd 2" [Day Month]
-        sequence Weekday [Monday Tuesday Wednesday Thursday Friday Saturday Sunday]
-        map Day Weekday c [AD year 2018 February day 27] Tuesday
+        format "1" [Weekday]
+        := tuesdays \\ [filter \\ [= Tuesday as Weekday] list Day ]
+        := mathsjam \\ t [@ - 2 ! tuesdays - just Month t just Month t]
     `.trim().split('\n');
-    base.forEach(x=>parser.evaluate(x));
+    base.forEach(x => parser.evaluate(x));
 } catch(e) {
     console.error(e);
 }
