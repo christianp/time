@@ -181,6 +181,7 @@ export class Scope {
             this.symbols[symbol] = new LSymbol(symbol);
         }
         this.symbols[symbol].add_meaning(value);
+        return value;
     }
 
     add_formatter(f) {
@@ -266,7 +267,7 @@ export class Parser {
     }
 
     parse(str) {
-        this.str = str;
+        this.str = str.trim();
         let pos = 0;
         const tokens = [];
         while(pos<this.str.length) {
@@ -489,7 +490,7 @@ scope.add_symbol('c', new Op(
             while(i<arr.length && arr[i] instanceof TimePoint) {
                 i += 1;
             }
-            return i>0 && i;
+            return i==arr.length;
         }
     ), 
     (scope, timepoints) => TimePoint.combine(... timepoints)
@@ -598,8 +599,6 @@ try {
         format "4th 3, 1 2" [Year Epoch Month Day]
         format "1nd 2" [Day Month]
         format "1" [Weekday]
-        := tuesdays \\ [filter \\ [= Tuesday as Weekday] list Day ]
-        := mathsjam \\ t [@ - 2 ! tuesdays - just Month t just Month t]
     `.trim().split('\n');
     base.forEach(x => parser.evaluate(x));
 } catch(e) {

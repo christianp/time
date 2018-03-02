@@ -2,44 +2,30 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-        <script type="module">
-            import * as lang from './lang.js';
-            window.lang = lang;
-
-            const input = document.getElementById('expr');
-            const eval_button = document.getElementById('eval');
-            const output = document.getElementById('output');
-
-            function log(text, symbol='>') {
-                output.textContent += text.split('\n').map((x,i)=>`${i==0 ? symbol : ' '} ${x}`).join('\n')+'\n'
-            }
-
-            eval_button.addEventListener('click',function() {
-                console.clear();
-                const code = input.value;
-                console.log(`code: ${code}`);
-                log(code);
-                try {
-                    const expr = lang.parser.parse(code);
-                    console.log('expr:',expr);
-                    const res = expr.evaluate();
-                    log(res instanceof Array ? res.join('\n') : res.toString(), '*');
-                    window.res = res;
-                } catch(e) {
-                    output.textContent +=`ERROR: ${e.message}\n`;
-                    console.error(e);
-                }
-            });
-        </script>
+        <script src="https://cdn.jsdelivr.net/npm/vue"></script>
+        <script type="module" src="notebook.js"></script>
         <style>
             #expr {
                 width: 100%;
             }
+            #cells {
+                padding: 0;
+                margin: 0;
+                list-style: none;
+            }
+            .cell {
+                display: flex;
+            }
+            cell pre {
+                margin: 0;
+            }
         </style>
 	</head>
     <body>
-        <textarea id="expr"></textarea>
-        <div><button type="button" id="eval">Evaluate</button></div>
-        <pre id="output"></pre>
+        <div id="app">
+            <ul id="cells">
+                <notebook-cell v-for="cell in cells" :cell="cell" @code-non-empty="code_non_empty" @ran="save"></notebook-cell>
+            </ul>
+        </div>
     </body>
 </html>
